@@ -1,17 +1,16 @@
 import pygame
 import random
 
-# Inicializa Pygame
 pygame.init()
 
-# Constantes
+# --- Constantes ---
 GRID_SIZE = 4
 TILE_SIZE = 100
 WINDOW_SIZE = GRID_SIZE * TILE_SIZE
 FONT_SIZE = 40
 FPS = 60
 
-# Cores (RGB)
+# --- Cores ---
 COLORS = {
     0: (205, 193, 180),
     2: (238, 228, 218),
@@ -30,19 +29,16 @@ COLORS = {
     'text_light': (249, 246, 242)
 }
 
-# Função para criar uma grade vazia
+# --- Lógica base ---
 def create_grid():
     return [[0 for _ in range(GRID_SIZE)] for _ in range(GRID_SIZE)]
 
-# Adiciona um novo tile (2 ou 4) em posição aleatória vazia
 def add_new_tile(grid):
-    empty_cells = [(i, j) for i in range(GRID_SIZE) for j in range(GRID_SIZE) if grid[i][j] == 0]
-    if empty_cells:
-        i, j = random.choice(empty_cells)
+    empty = [(i, j) for i in range(GRID_SIZE) for j in range(GRID_SIZE) if grid[i][j] == 0]
+    if empty:
+        i, j = random.choice(empty)
         grid[i][j] = 2 if random.random() < 0.9 else 4
-    return grid
 
-# Compacta uma linha para a esquerda (remove zeros e combina iguais)
 def compress_line(line):
     new_line = [num for num in line if num != 0]
     i = 0
@@ -54,45 +50,112 @@ def compress_line(line):
             i += 1
     return new_line + [0] * (GRID_SIZE - len(new_line))
 
-# Move para esquerda
 def move_left(grid):
-    new_grid = [compress_line(row) for row in grid]
-    return new_grid
+    return [compress_line(row) for row in grid]
 
-# Move para direita (inverte, move esquerda, inverte de novo)
 def move_right(grid):
-    new_grid = [compress_line(row[::-1])[::-1] for row in grid]
-    return new_grid
+    return [compress_line(row[::-1])[::-1] for row in grid]
 
-# Move para cima (transpõe, move esquerda, transpõe de novo)
 def move_up(grid):
-    transposed = list(map(list, zip(*grid)))
-    new_transposed = move_left(transposed)
-    return list(map(list, zip(*new_transposed)))
+    t = list(map(list, zip(*grid)))
+    t2 = move_left(t)
+    return list(map(list, zip(*t2)))
 
-# Move para baixo (transpõe, move direita, transpõe de novo)
 def move_down(grid):
-    transposed = list(map(list, zip(*grid)))
-    new_transposed = move_right(transposed)
-    return list(map(list, zip(*new_transposed)))
+    t = list(map(list, zip(*grid)))
+    t2 = move_right(t)
+    return list(map(list, zip(*t2)))
 
-# Verifica se grids são iguais (para saber se movimento mudou algo)
-def grids_equal(grid1, grid2):
-    return all(row1 == row2 for row1, row2 in zip(grid1, grid2))
+def grids_equal(a, b):
+    return all(r1 == r2 for r1, r2 in zip(a, b))
 
-# Verifica se jogo acabou (sem espaços vazios e sem movimentos possíveis)
 def is_game_over(grid):
     if any(0 in row for row in grid):
         return False
-    directions = [move_left, move_right, move_up, move_down]
-    return all(grids_equal(grid, direction(grid)) for direction in directions)
+    for fn in (move_left, move_right, move_up, move_down):
+        if not grids_equal(grid, fn(grid)):
+            return False
+    return True
 
-# Calcula pontuação (soma dos tiles)
 def get_score(grid):
     return sum(sum(row) for row in grid)
 
-# Desenha a grade na tela
-def draw_grid(screen, grid, font):
+# --- Cálculo de movimentos + novo grid (com mapeamento correto por direção) ---
+def compute_move_and_moves(grid, direction):
+    N = GRID_SIZE
+    new_grid = [[0]*N for _ in range(N)]
+    moves = []  # cada item: {"from":(i0,j0), "to":(i1,j1), "value":v, "merge":bool}
+
+    if direction in ("left", "right"):
+        for i in range(N):
+            line = grid[i]
+
+            if direction == "left":
+                indices = list(range(N))  # 0..N-1
+                to_index = lambda k: k
+            else:  # right
+                indices = list(range(N-1, -1, -1))  # N-1..0
+                to_index = lambda k: N-1-k
+
+            # remove zeros mantendo ordem da varredura
+            entries = [(line[j], j) for j in indices if line[j] != 0]
+
+            k = 0
+            idx = 0
+            while idx < len(entries):
+                v1, j1 = entries[idx]
+                if idx + 1 < len(entries) and entries[idx+1][0] == v1:
+                    v2, j2 = entries[idx+1]
+                    dest_j = to_index(k)
+                    new_grid[i][dest_j] = v1 * 2
+                    # dois tiles caminham para o mesmo destino
+                    moves.append({"from": (i, j1), "to": (i, dest_j), "value": v1, "merge": True})
+                    moves.append({"from": (i, j2), "to": (i, dest_j), "value": v2, "merge": True})
+                    idx += 2
+                else:
+                    dest_j = to_index(k)
+                    new_grid[i][dest_j] = v1
+                    moves.append({"from": (i, j1), "to": (i, dest_j), "value": v1, "merge": False})
+                    idx += 1
+                k += 1
+
+    else:  # up / down
+        for j in range(N):
+            col = [grid[i][j] for i in range(N)]
+
+            if direction == "up":
+                indices = list(range(N))
+                to_index = lambda k: k
+            else:  # down
+                indices = list(range(N-1, -1, -1))
+                to_index = lambda k: N-1-k
+
+            entries = [(col[i], i) for i in indices if col[i] != 0]
+
+            k = 0
+            idx = 0
+            while idx < len(entries):
+                v1, i1 = entries[idx]
+                if idx + 1 < len(entries) and entries[idx+1][0] == v1:
+                    v2, i2 = entries[idx+1]
+                    dest_i = to_index(k)
+                    new_grid[dest_i][j] = v1 * 2
+                    moves.append({"from": (i1, j), "to": (dest_i, j), "value": v1, "merge": True})
+                    moves.append({"from": (i2, j), "to": (dest_i, j), "value": v2, "merge": True})
+                    idx += 2
+                else:
+                    dest_i = to_index(k)
+                    new_grid[dest_i][j] = v1
+                    moves.append({"from": (i1, j), "to": (dest_i, j), "value": v1, "merge": False})
+                    idx += 1
+                k += 1
+
+    # remove movimentos "parados" (from == to) para não animar tile que não se moveu
+    moves = [m for m in moves if m["from"] != m["to"]]
+    return new_grid, moves
+
+# --- Desenho (com/sem animações) ---
+def draw_grid_base(screen, grid, font):
     screen.fill(COLORS['bg'])
     for i in range(GRID_SIZE):
         for j in range(GRID_SIZE):
@@ -105,13 +168,74 @@ def draw_grid(screen, grid, font):
                 text_rect = text.get_rect(center=rect.center)
                 screen.blit(text, text_rect)
 
-# Texto de Game Over
-def draw_game_over(screen, font):
+def draw_grid_with_animations(screen, grid, font, animations):
+    # desenha apenas os tiles "fixos", exceto destinos de animações (para não duplicar)
+    screen.fill(COLORS['bg'])
+
+    # destinos que vão receber tiles em movimento
+    end_cells = {(a["to"][0], a["to"][1]) for a in animations}
+
+    for i in range(GRID_SIZE):
+        for j in range(GRID_SIZE):
+            value = grid[i][j]
+            rect = pygame.Rect(j * TILE_SIZE, i * TILE_SIZE, TILE_SIZE, TILE_SIZE)
+
+            if (i, j) in end_cells:
+                # não desenha o tile final enquanto anima (será coberto pelos que se movem)
+                pygame.draw.rect(screen, COLORS[0], rect)  # fundo da célula
+                continue
+
+            pygame.draw.rect(screen, COLORS.get(value, COLORS[2048]), rect)
+            if value != 0:
+                color = COLORS['text_light'] if value >= 8 else COLORS['text']
+                text = font.render(str(value), True, color)
+                text_rect = text.get_rect(center=rect.center)
+                screen.blit(text, text_rect)
+
+    # desenha os tiles animando (cada um com seu progresso)
+    finished = []
+    for a in animations:
+        progress = a["frame"] / a["duration"]
+        if progress >= 1:
+            progress = 1
+            finished.append(a)
+
+        (si, sj) = a["from"]
+        (ei, ej) = a["to"]
+
+        sx, sy = sj * TILE_SIZE, si * TILE_SIZE
+        ex, ey = ej * TILE_SIZE, ei * TILE_SIZE
+
+        x = sx + (ex - sx) * progress
+        y = sy + (ey - sy) * progress
+
+        rect = pygame.Rect(x, y, TILE_SIZE, TILE_SIZE)
+        pygame.draw.rect(screen, COLORS.get(a["value"], COLORS[2048]), rect)
+        color = COLORS['text_light'] if a["value"] >= 8 else COLORS['text']
+        text = font.render(str(a["value"]), True, color)
+        text_rect = text.get_rect(center=rect.center)
+        screen.blit(text, text_rect)
+
+        a["frame"] += 1
+
+    for a in finished:
+        animations.remove(a)
+
+# --- Game Over (fade) ---
+def draw_game_over(screen, font, grid, alpha):
+    # desenha o tabuleiro "parado"
+    draw_grid_base(screen, grid, font)
+    # overlay escuro
+    overlay = pygame.Surface((WINDOW_SIZE, WINDOW_SIZE))
+    overlay.fill((0, 0, 0))
+    overlay.set_alpha(alpha)
+    screen.blit(overlay, (0, 0))
+    # texto
     text = font.render("Game Over!", True, (255, 0, 0))
     text_rect = text.get_rect(center=(WINDOW_SIZE // 2, WINDOW_SIZE // 2))
     screen.blit(text, text_rect)
 
-# Função principal do jogo
+# --- Main ---
 def main():
     screen = pygame.display.set_mode((WINDOW_SIZE, WINDOW_SIZE))
     pygame.display.set_caption("2048")
@@ -122,41 +246,64 @@ def main():
     add_new_tile(grid)
     add_new_tile(grid)
 
-    running = True
+    animations = []          # animações ativas
+    spawn_pending = False    # adicionar novo tile após terminar animação
     game_over = False
+    game_over_alpha = 0
 
-    while running:
+    while True:
         for event in pygame.event.get():
             if event.type == pygame.QUIT:
-                running = False
-            elif event.type == pygame.KEYDOWN and not game_over:
-                old_grid = [row[:] for row in grid]
-                if event.key == pygame.K_LEFT or event.key == pygame.K_a:
-                    grid = move_left(grid)
-                elif event.key == pygame.K_RIGHT or event.key == pygame.K_d:
-                    grid = move_right(grid)
-                elif event.key == pygame.K_UP or event.key == pygame.K_w:
-                    grid = move_up(grid)
-                elif event.key == pygame.K_DOWN or event.key == pygame.K_s:
-                    grid = move_down(grid)
-                
-                if not grids_equal(old_grid, grid):
-                    add_new_tile(grid)
-                
-                if is_game_over(grid):
-                    game_over = True
+                pygame.quit()
+                return
 
-        draw_grid(screen, grid, font)
+            # só aceita tecla quando NÃO está animando e não está em game over
+            if event.type == pygame.KEYDOWN and not animations and not game_over:
+                direction = None
+                if event.key in (pygame.K_LEFT, pygame.K_a): direction = "left"
+                elif event.key in (pygame.K_RIGHT, pygame.K_d): direction = "right"
+                elif event.key in (pygame.K_UP, pygame.K_w): direction = "up"
+                elif event.key in (pygame.K_DOWN, pygame.K_s): direction = "down"
+
+                if direction:
+                    new_grid, moves = compute_move_and_moves(grid, direction)
+                    if not grids_equal(grid, new_grid):
+                        grid = new_grid
+
+                        # cria animações a partir dos moves
+                        animations.clear()
+                        for m in moves:
+                            animations.append({
+                                "from": m["from"],
+                                "to": m["to"],
+                                "value": m["value"],   # valor original (pré-fusão) andando
+                                "merge": m["merge"],
+                                "frame": 0,
+                                "duration": 8          # ~0.13s em 60 FPS
+                            })
+                        spawn_pending = True  # só adiciona tile novo após animar
+
+        # pós-animação: adiciona o novo tile e checa game over
+        if not animations and spawn_pending and not game_over:
+            add_new_tile(grid)
+            spawn_pending = False
+            if is_game_over(grid):
+                game_over = True
+
+        # desenha
         if game_over:
-            draw_game_over(screen, font)
-        
-        # Mostra pontuação no título
+            if game_over_alpha < 180:
+                game_over_alpha += 5
+            draw_game_over(screen, font, grid, game_over_alpha)
+        else:
+            if animations:
+                draw_grid_with_animations(screen, grid, font, animations)
+            else:
+                draw_grid_base(screen, grid, font)
+
         pygame.display.set_caption(f"2048 - Score: {get_score(grid)}")
-        
         pygame.display.flip()
         clock.tick(FPS)
-
-    pygame.quit()
 
 if __name__ == "__main__":
     main()
